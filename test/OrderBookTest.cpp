@@ -275,19 +275,61 @@ TEMPLATE_TEST_CASE("OrderBook - print_snapshot contains expected lines",
     REQUIRE(out.find("5010000000000") != std::string::npos);
 }
 
-TEST_CASE("LimitOrderBook - unknown cancel throws", "[LimitOrderBook]")
+TEST_CASE("LimitOrderBook - unknown cancel is no-op", "[LimitOrderBook]")
 {
     LimitOrderBook book;
     book.apply(make_add(1, Side::Buy, 5000'000'000'000LL, 10));
-    REQUIRE_THROWS_AS(book.apply(make_cancel(999, 0)), std::runtime_error);
+    REQUIRE_NOTHROW(book.apply(make_cancel(999, 0)));
+    REQUIRE(book.volume_at(Side::Buy, 5000'000'000'000LL) == 10);
 }
 
-TEST_CASE("LimitOrderBook - unknown modify throws", "[LimitOrderBook]")
+TEST_CASE("LimitOrderBook - unknown modify treated as add", "[LimitOrderBook]")
 {
     LimitOrderBook book;
-    REQUIRE_THROWS_AS(
-        book.apply(make_modify(42, Side::Buy, 5000'000'000'000LL, 5)),
-        std::runtime_error);
+    book.apply(make_modify(42, Side::Buy, 5000'000'000'000LL, 5));
+    REQUIRE(book.volume_at(Side::Buy, 5000'000'000'000LL) == 5);
+    REQUIRE(book.best_price(Side::Buy) == std::optional{5000'000'000'000LL});
+}
+
+TEST_CASE("LimitOrderBook - duplicate add replaces prior order", "[LimitOrderBook]")
+{
+    LimitOrderBook book;
+    constexpr int64_t P = 5000'000'000'000LL;
+    book.apply(make_add(1, Side::Buy, P, 10));
+    book.apply(make_add(1, Side::Buy, P, 3));
+    REQUIRE(book.volume_at(Side::Buy, P) == 3);
+    REQUIRE_FALSE(book.empty(Side::Buy));
+}
+
+TEST_CASE("LimitOrderBook - cancel with remaining above size increases level qty",
+          "[LimitOrderBook]")
+{
+    LimitOrderBook book;
+    constexpr int64_t P = 5000'000'000'000LL;
+    book.apply(make_add(1, Side::Buy, P, 10));
+    book.apply(make_cancel(1, 15));
+    REQUIRE(book.volume_at(Side::Buy, P) == 15);
+}
+
+TEST_CASE("LimitOrderBook - modify to zero at same price removes order",
+          "[LimitOrderBook]")
+{
+    LimitOrderBook book;
+    constexpr int64_t P = 5000'000'000'000LL;
+    book.apply(make_add(1, Side::Buy, P, 10));
+    book.apply(make_modify(1, Side::Buy, P, 0));
+    REQUIRE(book.empty(Side::Buy));
+    REQUIRE_FALSE(book.best_price(Side::Buy).has_value());
+}
+
+TEST_CASE("LimitOrderBook - move transfers ownership", "[LimitOrderBook]")
+{
+    LimitOrderBook src;
+    constexpr int64_t P = 5000'000'000'000LL;
+    src.apply(make_add(1, Side::Buy, P, 10));
+    LimitOrderBook dst = std::move(src);
+    REQUIRE(dst.volume_at(Side::Buy, P) == 10);
+    REQUIRE(src.empty(Side::Buy));
 }
 
 TEST_CASE("LimitOrderBook - skips bad flags", "[LimitOrderBook]")

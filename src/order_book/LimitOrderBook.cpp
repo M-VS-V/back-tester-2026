@@ -1,7 +1,6 @@
 #include "LimitOrderBook.hpp"
 
-#include <stdexcept>
-#include <string>
+#include "BookAnomalyLog.hpp"
 
 namespace cmf
 {
@@ -11,15 +10,48 @@ LimitOrderBook::~LimitOrderBook()
     clear_book();
 }
 
+LimitOrderBook::LimitOrderBook(LimitOrderBook&& other) noexcept
+    : bid_tree_(other.bid_tree_),
+      ask_tree_(other.ask_tree_),
+      best_bid_(other.best_bid_),
+      best_ask_(other.best_ask_),
+      bid_levels_(std::move(other.bid_levels_)),
+      ask_levels_(std::move(other.ask_levels_)),
+      orders_(std::move(other.orders_)),
+      levels_cache_(std::move(other.levels_cache_))
+{
+    other.release_moved_from();
+}
+
+LimitOrderBook& LimitOrderBook::operator=(LimitOrderBook&& other) noexcept
+{
+    if (this != &other)
+    {
+        clear_book();
+        bid_tree_ = other.bid_tree_;
+        ask_tree_ = other.ask_tree_;
+        best_bid_ = other.best_bid_;
+        best_ask_ = other.best_ask_;
+        bid_levels_ = std::move(other.bid_levels_);
+        ask_levels_ = std::move(other.ask_levels_);
+        orders_ = std::move(other.orders_);
+        levels_cache_ = std::move(other.levels_cache_);
+        other.release_moved_from();
+    }
+    return *this;
+}
+
+void LimitOrderBook::release_moved_from() noexcept
+{
+    bid_tree_ = ask_tree_ = best_bid_ = best_ask_ = nullptr;
+    bid_levels_.clear();
+    ask_levels_.clear();
+    orders_.clear();
+}
+
 bool LimitOrderBook::should_skip_event(const Flags flags) noexcept
 {
     return has_flag(flags, Flags::BadTsRecv) || has_flag(flags, Flags::MaybeBadBook);
-}
-
-void LimitOrderBook::throw_unknown_order(const uint64_t order_id)
-{
-    throw std::runtime_error("LimitOrderBook: unknown order_id " +
-                             std::to_string(order_id));
 }
 
 PriceLevel*& LimitOrderBook::tree_for(const Side side) noexcept
@@ -198,10 +230,33 @@ void LimitOrderBook::unlink_order(OrderEntry* oe)
         lv->back = oe->prev;
 }
 
+void LimitOrderBook::destroy_order(
+    OrderEntry* oe, const std::unordered_map<uint64_t, OrderEntry*>::iterator it)
+{
+    PriceLevel* lv = oe->level;
+    const Side side = oe->side;
+    lv->total_quantity -= oe->quantity;
+    unlink_order(oe);
+    lv->order_count--;
+    orders_.erase(it);
+    delete oe;
+    if (lv->order_count == 0)
+        remove_level(lv, side);
+}
+
 void LimitOrderBook::add_order(const MarketDataEvent& ev)
 {
     if (ev.side == Side::None || !ev.is_price_defined())
         return;
+
+    if (const auto existing = orders_.find(ev.order_id); existing != orders_.end())
+    {
+        BookAnomalyLog::instance().log_book(BookAnomaly::DuplicateAddReplaced, ev);
+        MarketDataEvent cancel_ev{};
+        cancel_ev.order_id = ev.order_id;
+        cancel_ev.size = 0;
+        cancel_order(cancel_ev);
+    }
 
     const ScaledPrice sp = ev.price;
     const Side side = ev.side;
@@ -259,38 +314,43 @@ void LimitOrderBook::cancel_order(const MarketDataEvent& ev)
 {
     const auto it = orders_.find(ev.order_id);
     if (it == orders_.end())
-        throw_unknown_order(ev.order_id);
+    {
+        BookAnomalyLog::instance().log_book(BookAnomaly::UnknownCancel, ev);
+        return;
+    }
 
     OrderEntry* oe = it->second;
     PriceLevel* lv = oe->level;
-    const Side side = oe->side;
     const auto remaining = static_cast<int64_t>(ev.size);
-    const int64_t delta = oe->quantity - remaining;
-
-    if (delta > 0)
-        lv->total_quantity -= delta;
 
     if (remaining == 0)
     {
-        unlink_order(oe);
-        lv->order_count--;
-        orders_.erase(it);
-        delete oe;
-        if (lv->order_count == 0)
-            remove_level(lv, side);
+        destroy_order(oe, it);
+        return;
     }
-    else
-    {
-        oe->quantity = remaining;
-        oe->last_update = ev.ts_event;
-    }
+
+    const int64_t delta = oe->quantity - remaining;
+    lv->total_quantity -= delta;
+    oe->quantity = remaining;
+    oe->last_update = ev.ts_event;
 }
 
 void LimitOrderBook::modify_order(const MarketDataEvent& ev)
 {
     const auto it = orders_.find(ev.order_id);
     if (it == orders_.end())
-        throw_unknown_order(ev.order_id);
+    {
+        if (ev.side != Side::None && ev.is_price_defined())
+        {
+            BookAnomalyLog::instance().log_book(BookAnomaly::UnknownModifyAsAdd, ev);
+            add_order(ev);
+        }
+        else
+        {
+            BookAnomalyLog::instance().log_book(BookAnomaly::UnknownModifyIgnored, ev);
+        }
+        return;
+    }
 
     OrderEntry* oe = it->second;
     const ScaledPrice new_price = ev.is_price_defined() ? ev.price : oe->price;
@@ -299,6 +359,13 @@ void LimitOrderBook::modify_order(const MarketDataEvent& ev)
     if (new_price == oe->price && new_side == oe->side)
     {
         const int64_t new_qty = static_cast<int64_t>(ev.size);
+        if (new_qty == 0)
+        {
+            MarketDataEvent cancel_ev = ev;
+            cancel_ev.size = 0;
+            cancel_order(cancel_ev);
+            return;
+        }
         oe->level->total_quantity += new_qty - oe->quantity;
         oe->quantity = new_qty;
         oe->last_update = ev.ts_event;

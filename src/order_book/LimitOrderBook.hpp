@@ -24,8 +24,8 @@ class LimitOrderBook : public OrderBook<LimitOrderBook>
 
     LimitOrderBook(const LimitOrderBook&) = delete;
     LimitOrderBook& operator=(const LimitOrderBook&) = delete;
-    LimitOrderBook(LimitOrderBook&&) = default;
-    LimitOrderBook& operator=(LimitOrderBook&&) = default;
+    LimitOrderBook(LimitOrderBook&& other) noexcept;
+    LimitOrderBook& operator=(LimitOrderBook&& other) noexcept;
 
   protected:
     void apply_impl(const MarketDataEvent& event);
@@ -53,14 +53,16 @@ class LimitOrderBook : public OrderBook<LimitOrderBook>
     mutable std::vector<LevelPair> levels_cache_;
 
     [[nodiscard]] static bool should_skip_event(Flags flags) noexcept;
-    [[noreturn]] static void throw_unknown_order(uint64_t order_id);
 
     void add_order(const MarketDataEvent& ev);
     void cancel_order(const MarketDataEvent& ev);
     void modify_order(const MarketDataEvent& ev);
     void clear_book();
 
+    void destroy_order(OrderEntry* oe,
+                       std::unordered_map<uint64_t, OrderEntry*>::iterator it);
     void remove_level(PriceLevel* lv, Side side);
+    void release_moved_from() noexcept;
 
     [[nodiscard]] PriceLevel*& tree_for(Side side) noexcept;
     [[nodiscard]] PriceLevel*& best_for(Side side) noexcept;

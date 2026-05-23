@@ -17,6 +17,7 @@
 
 #include "common/MarketDataEvent.hpp"
 #include "order_book/AbseilOrderBook.hpp"
+#include "order_book/BookAnomalyLog.hpp"
 #include "order_book/SimpleOrderBookRouter.hpp"
 
 #define PROCESS_MARKET_DATA_EVENT_MODE 1 // 1 = COUNT mode, 2 = PRINT mode
@@ -122,6 +123,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* argv[])
             parse_args(std::span(argv, argc), parser_impl::filename_ext);
         const std::size_t data_files_count = cfg.data_files.size();
 
+        // Open predefined anomaly log files (logs/order-book-anomalies.log, etc.).
+        [[maybe_unused]] auto& anomaly_log = BookAnomalyLog::instance();
+
         NaiveTimer timer;
         std::deque<BlockingQueue<MarketDataEvent>> file_queues;
         for (std::size_t i = 0; i < data_files_count; ++i)
@@ -149,6 +153,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] const char* argv[])
 #endif
 
       sink.print_best_bid_ask(std::cout);
+      BookAnomalyLog::instance().write_summary(std::cerr);
+      BookAnomalyLog::instance().flush();
       sink.print_queue.close(); });
 
         std::vector<std::thread> producers;

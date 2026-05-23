@@ -1,5 +1,7 @@
 #include "MapOrderBook.hpp"
 
+#include "BookAnomalyLog.hpp"
+
 namespace cmf
 {
 
@@ -39,6 +41,13 @@ void MapOrderBook::apply_impl(const MarketDataEvent& e)
     {
         if (e.side == Side::None || !e.is_price_defined())
             break;
+        if (order_index_.contains(e.order_id))
+        {
+            BookAnomalyLog::instance().log_book(BookAnomaly::DuplicateAddReplaced, e,
+                                                "MapOrderBook");
+            auto& [side, price, stored_size] = order_index_[e.order_id];
+            remove_from_level(side, price, static_cast<int64_t>(stored_size));
+        }
         add_to_level(e.side, e.price, static_cast<int64_t>(e.size));
         order_index_[e.order_id] = {e.side, e.price, e.size};
         break;
@@ -47,7 +56,11 @@ void MapOrderBook::apply_impl(const MarketDataEvent& e)
     {
         auto it = order_index_.find(e.order_id);
         if (it == order_index_.end())
+        {
+            BookAnomalyLog::instance().log_book(BookAnomaly::UnknownCancel, e,
+                                                "MapOrderBook");
             break;
+        }
         auto& [side, price, stored_size] = it->second;
         auto remaining = static_cast<int64_t>(e.size);
         int64_t delta = static_cast<int64_t>(stored_size) - remaining;
@@ -67,11 +80,17 @@ void MapOrderBook::apply_impl(const MarketDataEvent& e)
         auto it = order_index_.find(e.order_id);
         if (it == order_index_.end())
         {
-            // Treat as Add if not tracked yet
             if (e.side != Side::None && e.is_price_defined())
             {
+                BookAnomalyLog::instance().log_book(BookAnomaly::UnknownModifyAsAdd,
+                                                    e, "MapOrderBook");
                 add_to_level(e.side, e.price, static_cast<int64_t>(e.size));
                 order_index_[e.order_id] = {e.side, e.price, e.size};
+            }
+            else
+            {
+                BookAnomalyLog::instance().log_book(BookAnomaly::UnknownModifyIgnored,
+                                                    e, "MapOrderBook");
             }
             break;
         }

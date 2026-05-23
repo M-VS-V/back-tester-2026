@@ -1,11 +1,11 @@
 #pragma once
 
+#include "BookAnomalyLog.hpp"
 #include "LimitOrderBook.hpp"
 #include "OrderBookRouter.hpp"
 #include "PmrCompat.hpp"
 #include <ostream>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 
 namespace cmf
@@ -42,9 +42,9 @@ class SimpleOrderBookRouter
 
         if (instr_id == 0 && e.order_id != 0) [[unlikely]]
         {
-            throw std::runtime_error(
-                "SimpleOrderBookRouter: cannot resolve instrument_id for order_id " +
-                std::to_string(e.order_id));
+            BookAnomalyLog::instance().log_router(RouterAnomaly::UnresolvedInstrument,
+                                                  e);
+            return;
         }
 
         order_books_[instr_id].apply(e);
