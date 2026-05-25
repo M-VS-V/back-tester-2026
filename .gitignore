@@ -13,6 +13,7 @@ compile_commands.json
 3rdparty/*
 build
 log
+logs/
 .claude
 CLAUDE.md
 

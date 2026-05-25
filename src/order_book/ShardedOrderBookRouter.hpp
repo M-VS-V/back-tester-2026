@@ -1,6 +1,7 @@
 #pragma once
 
-#include "MapOrderBook.hpp"
+#include "BookAnomalyLog.hpp"
+#include "LimitOrderBook.hpp"
 #include "OrderBookRouter.hpp"
 #include "SimpleOrderBookRouter.hpp"
 #include "common/BlockingQueue.hpp"
@@ -17,7 +18,7 @@
 namespace cmf
 {
 
-template <typename BookType = MapOrderBook, std::size_t NumShards = 4>
+template <typename BookType = LimitOrderBook, std::size_t NumShards = 4>
 class ShardedOrderBookRouter
     : public OrderBookRouter<ShardedOrderBookRouter<BookType, NumShards>>
 {
@@ -135,9 +136,9 @@ class ShardedOrderBookRouter
 
         if (instr_id == 0 && e.order_id != 0) [[unlikely]]
         {
-            throw std::runtime_error(
-                "ShardedOrderBookRouter: cannot resolve instrument_id for order_id " +
-                std::to_string(e.order_id));
+            BookAnomalyLog::instance().log_router(RouterAnomaly::UnresolvedInstrument,
+                                                  e);
+            return;
         }
 
         std::size_t shard = instr_id % NumShards;

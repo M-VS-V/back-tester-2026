@@ -1,5 +1,6 @@
 #include "catch2/catch_all.hpp"
 #include "common/MarketDataEvent.hpp"
+#include "order_book/MapOrderBook.hpp"
 #include "order_book/ShardedOrderBookRouter.hpp"
 #include "order_book/SimpleOrderBookRouter.hpp"
 
@@ -120,7 +121,7 @@ TEMPLATE_TEST_CASE(
     REQUIRE(out.find("// 0") == std::string::npos);
 }
 
-TEMPLATE_TEST_CASE("OrderBookRouter - unresolvable order_id throws exception",
+TEMPLATE_TEST_CASE("OrderBookRouter - unresolvable order_id is skipped",
                    "[OrderBookRouter]", SimpleRouter, ShardedRouter2,
                    ShardedRouter4)
 {
@@ -132,7 +133,7 @@ TEMPLATE_TEST_CASE("OrderBookRouter - unresolvable order_id throws exception",
     bad_cancel.action = Action::Cancel;
     bad_cancel.size = 0;
 
-    REQUIRE_THROWS_AS(router.apply(bad_cancel), std::runtime_error);
+    REQUIRE_NOTHROW(router.apply(bad_cancel));
 }
 
 TEMPLATE_TEST_CASE(
