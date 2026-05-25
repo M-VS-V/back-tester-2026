@@ -90,6 +90,11 @@ PriceLevel* LimitOrderBook::tree_min(PriceLevel* n) noexcept
 
 const PriceLevel* LimitOrderBook::inorder_successor(const PriceLevel* n) noexcept
 {
+    if (!n)
+        return nullptr;
+
+    // The successor is either the left-most node in the right subtree, or the
+    // first ancestor for which this node belongs to the left subtree.
     if (n->right_child)
         return tree_min(const_cast<PriceLevel*>(n->right_child));
     while (n->parent && n->parent->right_child == n)
@@ -99,6 +104,11 @@ const PriceLevel* LimitOrderBook::inorder_successor(const PriceLevel* n) noexcep
 
 const PriceLevel* LimitOrderBook::inorder_predecessor(const PriceLevel* n) noexcept
 {
+    if (!n)
+        return nullptr;
+
+    // The predecessor mirrors successor lookup: use the right-most node in the
+    // left subtree, or walk up until leaving a right subtree.
     if (n->left_child)
         return tree_max(const_cast<PriceLevel*>(n->left_child));
     while (n->parent && n->parent->left_child == n)
@@ -252,6 +262,10 @@ void LimitOrderBook::add_order(const MarketDataEvent& ev)
     if (const auto existing = orders_.find(ev.order_id); existing != orders_.end())
     {
         BookAnomalyLog::instance().log_book(BookAnomaly::DuplicateAddReplaced, ev);
+        // Duplicate adds should not normally appear in an MBO stream. We use a
+        // "last event wins" recovery policy here: replace the existing order so
+        // the book self-heals to the latest feed state, and keep an anomaly log
+        // entry so the corrupted stream can still be investigated.
         MarketDataEvent cancel_ev{};
         cancel_ev.order_id = ev.order_id;
         cancel_ev.size = 0;
@@ -358,6 +372,9 @@ void LimitOrderBook::modify_order(const MarketDataEvent& ev)
 
     if (new_price == oe->price && new_side == oe->side)
     {
+        // A price/side-stable modify keeps the order at the same price level and
+        // queue position, so only the aggregate level quantity and stored order
+        // quantity need to change.
         const int64_t new_qty = static_cast<int64_t>(ev.size);
         if (new_qty == 0)
         {
@@ -372,6 +389,9 @@ void LimitOrderBook::modify_order(const MarketDataEvent& ev)
         return;
     }
 
+    // Changing price or side moves the order to another level, so remove the old
+    // entry first and then re-add it. If both price and quantity changed, ev.size
+    // becomes the new quantity when add_order() creates the replacement entry.
     MarketDataEvent cancel_ev = ev;
     cancel_ev.size = 0;
     cancel_order(cancel_ev);
