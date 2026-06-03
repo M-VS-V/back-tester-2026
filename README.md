@@ -36,7 +36,14 @@ Install dependencies once:
 sudo apt install -y cmake g++ clang-format
 ```
 
-Build using cmake:
+Build using the helper script (wraps CMake; run `scripts/build.sh --help` for options):
+
+```
+scripts/build.sh            # Release build with tests + benchmarks
+scripts/build.sh -t Debug -T  # Debug build, then run the test suite
+```
+
+or invoke cmake directly:
 
 ```
 cmake -B build -S .
