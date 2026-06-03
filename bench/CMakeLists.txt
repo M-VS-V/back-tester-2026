@@ -8,5 +8,6 @@ target_link_libraries(${TARGET} PRIVATE
     googlebenchmark-static-lib
     back-tester-ingestion
     back-tester-order-book
+    back-tester-protocol
     Threads::Threads
 )
